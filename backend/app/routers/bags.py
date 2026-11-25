@@ -1,5 +1,4 @@
 from __future__ import annotations
-from app.services import bagseal_surface
 
 import uuid
 
@@ -14,12 +13,14 @@ from app.services.bag_boundary import (
     WRITE_MOUTHS,
     append_domain_event,
     assert_bag_addable,
+    bag_count,
     decorate_bag,
     domain_event_to_dict,
     gate_view,
     get_bag_or_404,
     is_sealed_bag,
     policy_view,
+    seal_claim,
 )
 from app.services.common import audit, current_shift, now_str, require_unsealed
 from app.services.projections import scan_rows
@@ -114,7 +115,8 @@ def bag_detail(bag_id: int):
 def bag_gates(bag_id: int):
     with db() as conn:
         bag = get_bag_or_404(conn, bag_id)
-        return gate_view(bag, decorate_bag(conn, bag)["件数"])
+        claim = seal_claim(conn, bag)
+        return gate_view(bag, bag_count(conn, bag_id), claim)
 
 
 @router.get("/封袋/{bag_id}/详情")
@@ -235,7 +237,9 @@ def add_to_bag(bag_id: int, body: BagAddIn):
 def _seal_bag_row(conn, bag_id: int, operator: str = "", note: str = "") -> dict:
     require_unsealed(conn)
     bag = get_bag_or_404(conn, bag_id)
-    if bag["status"] != "集包中":
+    # A bag that still carries a seal event is sealed even if its status was
+    # tampered back to 集包中; never allow a second seal to paper over that tear.
+    if is_sealed_bag(bag) or bag["status"] != "集包中":
         raise HTTPException(400, f"袋状态不可封口: {bag['status']}")
 
     items = conn.execute(
@@ -317,6 +321,16 @@ def _seal_bag_row(conn, bag_id: int, operator: str = "", note: str = "") -> dict
         event_id=event_id,
     )
     row = conn.execute("SELECT * FROM bags WHERE id=?", (bag_id,)).fetchone()
+
+    # Do not let a success receipt outrun the boundary. Re-derive the seal claim
+    # inside the same transaction; if any gap remains, reject and roll the whole
+    # seal write back so the badge can never be lit while a mouth is still open.
+    claim = seal_claim(conn, row)
+    if not claim["封条已亮"]:
+        raise HTTPException(
+            500,
+            "封袋宣称与袋体写边界不一致，整笔回滚：" + "；".join(claim["缺口"]),
+        )
     return decorate_bag(conn, row)
 
 
@@ -358,14 +372,4 @@ def unseal_bag(bag_id: int, body: BagUnsealIn | None = None):
             "当前全局架构为袋体写边界全关；封袋确认不可解封，"
             f"封口事件 {bag['seal_event_id']} 继续关闭再入袋/回流/改路由写口",
         )
-
-_seal_bag_impl = seal_bag
-
-
-def seal_bag(*args, **kwargs):
-    out = _seal_bag_impl(*args, **kwargs)
-    return bagseal_surface.after_seal(out, *args, **kwargs)
-
-def _surface_router_bags() -> dict:
-    return {"panel": "bags", "ready": True}
 

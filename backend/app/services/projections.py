@@ -9,6 +9,7 @@ from app.services.bag_boundary import (
     WRITE_MOUTHS,
     decorate_bag,
     policy_view,
+    seal_claim,
 )
 
 SCAN_SELECT = """
@@ -30,14 +31,14 @@ SCAN_SELECT = """
 
 def decorate_scan(row: Any) -> dict[str, Any]:
     item = dict(row)
-    sealed = (
-        item.get("status") == "已封袋"
-        or item.get("袋状态") == "已封袋"
-        or item.get("bag_status") == "已封袋"
-        or bool(item.get("封口事件编号") or item.get("bag_seal_event_id"))
-    )
     status = item.get("status")
+    bag_status = item.get("袋状态") or item.get("bag_status")
     sealed_event_id = item.get("封口事件编号") or item.get("bag_seal_event_id")
+    # A scan is sealed exactly when the bag body write boundary is closed: either
+    # the item itself was frozen, the bag row says sealed, or a seal event is
+    # recorded. This must match bag_boundary.is_sealed_bag so every read surface
+    # and every write gate agree on the same fact.
+    sealed = status == "已封袋" or bag_status == "已封袋" or bool(sealed_event_id)
     item["sealed"] = sealed
     item["封袋已封"] = sealed
     item["seal_event_id"] = sealed_event_id
@@ -57,7 +58,28 @@ def scan_rows(conn, where: str = "", params: tuple[Any, ...] = (), limit: int = 
         sql += f" WHERE {where}"
     sql += " ORDER BY s.id DESC LIMIT ?"
     rows = conn.execute(sql, (*params, limit)).fetchall()
-    return [decorate_scan(row) for row in rows]
+    claims: dict[int, dict[str, Any]] = {}
+    result = []
+    for row in rows:
+        item = decorate_scan(row)
+        bag_id = item.get("bag_id")
+        if bag_id is not None and item.get("sealed"):
+            bag_id = int(bag_id)
+            if bag_id not in claims:
+                bag_row = conn.execute("SELECT * FROM bags WHERE id=?", (bag_id,)).fetchone()
+                claims[bag_id] = seal_claim(conn, bag_row) if bag_row else {}
+            claim = claims[bag_id]
+            item["封条已亮"] = bool(claim.get("封条已亮"))
+            item["半截"] = bool(claim.get("半截"))
+            item["缺口"] = list(claim.get("缺口") or [])
+            if claim.get("半截"):
+                item["锁定原因"] = "封条半截：灯灭但写口仍全关；" + "；".join(claim.get("缺口") or [])
+        else:
+            item.setdefault("封条已亮", False)
+            item.setdefault("半截", False)
+            item.setdefault("缺口", [])
+        result.append(item)
+    return result
 
 
 def chute_rows(conn) -> list[dict[str, Any]]:
@@ -66,7 +88,8 @@ def chute_rows(conn) -> list[dict[str, Any]]:
         SELECT c.*, l.name AS line_name, l.name AS 分拣线名,
                COALESCE(SUM(CASE WHEN s.status='已路由' THEN 1 ELSE 0 END), 0) AS 未入袋件数,
                COALESCE(SUM(CASE WHEN s.status='已入袋' THEN 1 ELSE 0 END), 0) AS 集包中件数,
-               COALESCE(SUM(CASE WHEN s.status='已封袋' THEN 1 ELSE 0 END), 0) AS 已封袋件数,
+               COALESCE(SUM(CASE WHEN b.seal_event_id IS NOT NULL OR b.status='已封袋'
+                                 THEN 1 ELSE 0 END), 0) AS 已封袋件数,
                COALESCE(SUM(CASE WHEN s.status IN ('已路由','已入袋') THEN 1 ELSE 0 END), 0) AS 在口件数,
                (
                  SELECT b.code FROM bags b
@@ -75,17 +98,20 @@ def chute_rows(conn) -> list[dict[str, Any]]:
                ) AS 集包中袋码,
                (
                  SELECT b.code FROM bags b
-                  WHERE b.chute_id=c.id AND b.status='已封袋'
+                  WHERE b.chute_id=c.id
+                    AND (b.status='已封袋' OR b.seal_event_id IS NOT NULL)
                   ORDER BY b.id DESC LIMIT 1
                ) AS 已封袋袋码,
                (
                  SELECT b.seal_event_id FROM bags b
-                  WHERE b.chute_id=c.id AND b.status='已封袋'
+                  WHERE b.chute_id=c.id
+                    AND (b.status='已封袋' OR b.seal_event_id IS NOT NULL)
                   ORDER BY b.id DESC LIMIT 1
                ) AS 封口事件编号
           FROM chutes c
           JOIN lines l ON l.id=c.line_id
           LEFT JOIN scans s ON s.chute_id=c.id
+          LEFT JOIN bags b ON b.id = s.bag_id
          GROUP BY c.id
          ORDER BY c.code
         """
@@ -103,6 +129,24 @@ def chute_rows(conn) -> list[dict[str, Any]]:
             "封口事件编号": item["封口事件编号"],
         }
         item["event_id"] = item["封口事件编号"]
+        # The chute door must not advertise a sealed bag whose light is torn.
+        latest_sealed = conn.execute(
+            """
+            SELECT * FROM bags
+             WHERE chute_id=? AND (status='已封袋' OR seal_event_id IS NOT NULL)
+             ORDER BY id DESC LIMIT 1
+            """,
+            (item["id"],),
+        ).fetchone()
+        if latest_sealed is not None:
+            claim = seal_claim(conn, latest_sealed)
+            item["封条已亮"] = claim["封条已亮"]
+            item["半截"] = claim["半截"]
+            item["缺口"] = claim["缺口"]
+        else:
+            item["封条已亮"] = False
+            item["半截"] = False
+            item["缺口"] = []
         result.append(item)
     return result
 
@@ -134,10 +178,22 @@ def overview_data(conn) -> dict[str, Any]:
     ).fetchone()["c"]
     sealed_scan_items = counts["已封袋"]
     drift_bags = [
-        {"id": b["id"], "code": b["code"], "当前件数": b["件数"], "封口件数": b["封口件数"]}
+        {
+            "id": b["id"],
+            "code": b["code"],
+            "当前件数": b["件数"],
+            "封口件数": b["封口件数"],
+            "缺口": b["缺口"],
+        }
         for b in bags
         if b["sealed"] and not b["件数一致"]
     ]
+    torn_bags = [
+        {"id": b["id"], "code": b["code"], "缺口": b["缺口"]}
+        for b in bags
+        if b["半截"]
+    ]
+    lit_bags = [b for b in bags if b["封条已亮"]]
     events = [
         dict(row)
         for row in conn.execute(
@@ -153,11 +209,14 @@ def overview_data(conn) -> dict[str, Any]:
         "袋数": bag_total,
         "集包中袋数": open_bags,
         "已封袋数": sealed_bags,
+        "封条已亮袋数": len(lit_bags),
+        "半截袋数": len(torn_bags),
         "封口冻结件数": int(frozen_items or 0),
         "已封袋扫描件数": sealed_scan_items,
-        "冻结件数一致": int(frozen_items or 0) == sealed_scan_items and not drift_bags,
+        "冻结件数一致": int(frozen_items or 0) == sealed_scan_items and not drift_bags and not torn_bags,
         "拧花袋数": len(drift_bags),
         "拧花袋": drift_bags,
+        "半截袋": torn_bags,
     }
     return {
         "班次": dict(shift) if shift else None,

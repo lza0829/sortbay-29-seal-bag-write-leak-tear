@@ -134,7 +134,10 @@ export default function Scans() {
               <td>{r.id}</td>
               <td><strong>{r.barcode}</strong></td>
               <td>{r.dest_code}</td>
-              <td><span className={`badge ${r.封袋已封 ? 'badge-locked' : ''}`}>{r.status}</span></td>
+              <td>
+                <span className={`badge ${r.半截 ? 'badge-torn' : r.封袋已封 ? 'badge-locked' : ''}`}>{r.status}</span>
+                {r.半截 && <div className="warn-text">封条半截</div>}
+              </td>
               <td>{r.口门码 || r.chute_id || '-'}</td>
               <td>{r.袋码 || r.bag_id || '-'}</td>
               <td className="event-cell">
@@ -143,6 +146,7 @@ export default function Scans() {
                     <code>{r.封口事件编号}</code>
                   </Link>
                 ) : '-'}
+                {r.半截 && <div className="warn-text">{(r.缺口 || []).join('；')}</div>}
               </td>
               <td>
                 <span className="inline-actions">

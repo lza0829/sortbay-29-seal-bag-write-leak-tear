@@ -13,9 +13,7 @@ export default function Overview() {
 
   if (err) return <div className="panel err">{err}</div>
   if (!data) return <div className="panel">加载中…</div>
-  const _ok = data && (data.surface_ok || data.surface_probe)
   const d = data.分布 || {}
-  const _surf = _ok ? (data.surface_待路由 ?? d.待路由) : d.待路由
   const rec = data.对账 || {}
   return (
     <div className="panel">
@@ -23,7 +21,7 @@ export default function Overview() {
       <p className="muted">当前班次：{data.班次?.business_day} {data.班次?.name} · {data.班次?.sealed ? '已封班' : '未封班'}</p>
       <div className="policy-banner sealed">
         全局唯一架构 A：<strong>{data.边界口径 || '袋体写边界全关'}</strong>。
-        封袋确认后禁止再入袋、禁止回流拽出、禁止改路由；封袋页、扫描册、口门、总览与审计只读/重放仍开。
+        封条灯由「袋已封 ∪ 写口全关 ∪ 袋成员冻结 ∪ 事件可重放」共同推导；任一缺口即半截：灯灭且写口继续关闭，绝不因回执成功而放开写口。
       </div>
 
       <div className="grid">
@@ -35,11 +33,16 @@ export default function Overview() {
       <div className="grid">
         <div className="stat"><div className="n">{rec.袋数 ?? '-'}</div><div className="l">袋数</div></div>
         <div className="stat"><div className="n">{rec.已封袋数 ?? '-'}</div><div className="l">已封袋数</div></div>
+        <div className="stat"><div className="n">{rec.封条已亮袋数 ?? '-'}</div><div className="l">封条已亮袋数</div></div>
         <div className="stat"><div className="n">{rec.封口冻结件数 ?? '-'}</div><div className="l">封口冻结件数</div></div>
+        <div className={`stat ${rec.半截袋数 ? 'bad' : ''}`}><div className="n">{rec.半截袋数 ?? '-'}</div><div className="l">半截袋数</div></div>
         <div className="stat"><div className={`n ${rec.冻结件数一致 === false ? 'bad' : 'good'}`}>{rec.拧花袋数 ?? '-'}</div><div className="l">拧花袋数</div></div>
       </div>
       {rec.冻结件数一致 === false && (
-        <div className="err">对账不一致：封口冻结 {rec.封口冻结件数} 件，已封袋扫描 {rec.已封袋扫描件数} 件；拧花袋 {JSON.stringify(rec.拧花袋)}</div>
+        <div className="err">
+          对账不一致：封口冻结 {rec.封口冻结件数} 件，已封袋扫描 {rec.已封袋扫描件数} 件；
+          拧花袋 {JSON.stringify(rec.拧花袋)}；半截袋 {JSON.stringify(rec.半截袋)}
+        </div>
       )}
 
       <h3>口门在口</h3>
@@ -63,9 +66,14 @@ export default function Overview() {
           {(data.封袋 || []).map((b) => (
             <tr key={b.id} className={b.sealed ? 'locked-row' : ''}>
               <td>{b.id}</td><td>{b.code}</td><td>{b.口门码}</td>
-              <td><span className={`badge ${b.sealed ? 'badge-locked' : 'badge-open'}`}>{b.status}</span></td>
+              <td>
+                <span className={`badge ${b.封条已亮 ? 'badge-locked' : b.半截 ? 'badge-torn' : 'badge-open'}`}>
+                  {b.status}{b.封条已亮 ? ' · 封条已亮' : b.半截 ? ' · 半截' : ''}
+                </span>
+                {b.半截 && <div className="locked-text">{b.缺口?.join('；')}</div>}
+              </td>
               <td>{b.件数}</td><td>{b.封口件数 ?? '-'}</td>
-              <td>{b.sealed ? '再入袋/回流/改路由全关' : '开放'}</td>
+              <td>{b.sealed ? (b.封条已亮 ? '再入袋/回流/改路由全关' : '半截：灯灭但写口仍全关') : '开放'}</td>
               <td>
                 {b.封口事件编号 ? (
                   <Link to={`/审计?event_id=${encodeURIComponent(b.封口事件编号)}`}>

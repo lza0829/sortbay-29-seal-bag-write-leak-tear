@@ -7,9 +7,11 @@ from fastapi import HTTPException
 from app.services.bag_boundary import (
     READ_SURFACES,
     WRITE_MOUTHS,
+    compute_route_drift,
     decorate_bag,
     domain_event_to_dict,
     gate_view,
+    seal_claim,
 )
 from app.services.projections import overview_data, scan_rows
 
@@ -61,47 +63,9 @@ def build_seal_replay(conn, event_row) -> dict[str, Any]:
     current_barcodes = [x["barcode"] for x in items]
     current_by_id = {int(x["id"]): x for x in items}
 
-    route_drift = []
-    for snapshot in payload.get("routing_snapshot", []) or []:
-        scan_id = int(snapshot.get("scan_id"))
-        current = current_by_id.get(scan_id)
-        if current is None:
-            continue
-
-        changes = {}
-        if snapshot.get("dest_code") is not None and current.get("dest_code") != snapshot.get("dest_code"):
-            changes["dest_code"] = {
-                "sealed": snapshot.get("dest_code"),
-                "current": current.get("dest_code"),
-            }
-        if snapshot.get("chute_id") is not None and current.get("chute_id") != snapshot.get("chute_id"):
-            changes["chute_id"] = {
-                "sealed": snapshot.get("chute_id"),
-                "current": current.get("chute_id"),
-            }
-
-        sealed_dest = snapshot.get("dest_code")
-        sealed_route_chute = snapshot.get("route_chute_id")
-        if sealed_dest and sealed_route_chute is not None:
-            rule = conn.execute(
-                "SELECT chute_id FROM route_rules WHERE dest_code=?",
-                (sealed_dest,),
-            ).fetchone()
-            if rule is None:
-                changes["route_rule_missing"] = sealed_dest
-            elif int(rule["chute_id"]) != int(sealed_route_chute):
-                changes["route_table_chute_id"] = {
-                    "sealed": sealed_route_chute,
-                    "current": rule["chute_id"],
-                }
-
-        if changes:
-            route_drift.append({
-                "scan_id": scan_id,
-                "barcode": snapshot.get("barcode"),
-                "changes": changes,
-                "seal_event_id": event_row["event_id"],
-            })
+    route_drift = compute_route_drift(conn, payload, current_by_id)
+    for row in route_drift:
+        row["seal_event_id"] = event_row["event_id"]
 
     chute = None
     if bag_row["chute_id"]:
@@ -142,6 +106,7 @@ def build_seal_replay(conn, event_row) -> dict[str, Any]:
     audits = [dict(row) for row in audit_rows]
 
     route_events = []
+    divert_batches = []
     if current_scan_ids:
         marks = ",".join("?" for _ in current_scan_ids)
         route_events = [
@@ -163,10 +128,18 @@ def build_seal_replay(conn, event_row) -> dict[str, Any]:
                 current_scan_ids,
             ).fetchall()
         ]
-    else:
-        divert_batches = []
+
+    claim = seal_claim(conn, bag_row)
+    unfrozen = [
+        {"scan_id": int(row["id"]), "barcode": row["barcode"], "status": row["status"]}
+        for row in current_by_id.values()
+        if row["status"] != "已封袋"
+    ]
 
     overview = overview_data(conn)
+    # Replay must agree with the live seal claim: a member set / count / routing
+    # gap is drift, and a claim gap is a 半截 seal that must not be presented as
+    # successfully sealed.
     consistency = {
         "event_count": int(payload.get("item_count", len(event_scan_ids)) or 0),
         "bag_sealed_count": int(bag_row["sealed_count"] or 0),
@@ -175,15 +148,21 @@ def build_seal_replay(conn, event_row) -> dict[str, Any]:
         "event_barcode_set_matches_bag": set(event_barcodes) == set(current_barcodes),
         "missing_scan_ids": sorted(set(event_scan_ids) - set(current_scan_ids)),
         "extra_scan_ids": sorted(set(current_scan_ids) - set(event_scan_ids)),
+        "unfrozen_members": unfrozen,
         "route_drift": route_drift,
         "route_drift_count": len(route_drift),
         "routing_snapshot_matches": not route_drift,
         "bag_status_matches_event": bag_row["status"] == "已封袋"
         and bag_row["seal_event_id"] == event_row["event_id"],
+        "seal_light": claim["封条已亮"],
+        "torn": claim["半截"],
+        "gaps": claim["缺口"],
         "no_drift": bag["件数一致"]
         and not route_drift
+        and not unfrozen
         and set(event_scan_ids) == set(current_scan_ids)
-        and bag_row["status"] == "已封袋",
+        and bag_row["status"] == "已封袋"
+        and claim["封条已亮"],
     }
     consistency["replay_closed_boundary"] = consistency["no_drift"]
 
@@ -192,8 +171,8 @@ def build_seal_replay(conn, event_row) -> dict[str, Any]:
         "event": event,
         "策略": payload.get("boundary_policy", "bag_body_write_boundary_closed"),
         "historical_gate": payload.get("boundary"),
-        "current_gate": gate_view(bag_row, bag["件数"]),
-        "写闸": gate_view(bag_row, bag["件数"])["写闸"],
+        "current_gate": gate_view(bag_row, bag["件数"], claim),
+        "写闸": gate_view(bag_row, bag["件数"], claim)["写闸"],
         "write_mouths": WRITE_MOUTHS,
         "read_surfaces": READ_SURFACES,
         "封袋页": bag,

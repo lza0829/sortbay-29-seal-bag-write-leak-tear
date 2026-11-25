@@ -143,8 +143,10 @@ th { background: #e4e8ee; }
 .badge { display: inline-block; padding: 0.16rem 0.42rem; border: 1px solid #7c8794; background: #eef1f4; font-size: 0.82rem; white-space: nowrap; }
 .badge-open { border-color: var(--ok); background: #e2f0e8; color: var(--ok); }
 .badge-locked { border-color: var(--danger); background: #f4ddd8; color: var(--danger); font-weight: 700; }
+.badge-torn { border-color: var(--warn); background: #fbf1d8; color: #7a5a12; font-weight: 700; }
 .locked-row { background: #f8ece9 !important; }
 .locked-text, .bad, .err { color: var(--danger); }
+.warn-text { color: #7a5a12; font-weight: 600; }
 .good { color: var(--ok); }
 
 .policy-banner {
@@ -157,14 +159,17 @@ th { background: #e4e8ee; }
 }
 .boundary-card { border: 1px solid #8b949e; background: #eef1f4; padding: 0.75rem; margin: 0.75rem 0 1rem; }
 .boundary-card.sealed { border-left: 6px solid var(--danger); background: #f7e8e4; }
+.boundary-card.torn { border-left: 6px dashed var(--warn); background: #fbf1d8; }
 .boundary-card.open { border-left: 6px solid var(--ok); background: #e8f3ec; }
 .boundary-title { font-weight: 700; margin-bottom: 0.55rem; display: flex; align-items: center; gap: 0.45rem; }
 .seal-dot { width: 0.8rem; height: 0.8rem; border-radius: 50%; background: #8b949e; display: inline-block; }
 .seal-dot.on { background: var(--danger); box-shadow: 0 0 0 4px #a33b2b22; }
+.seal-dot.torn { background: var(--warn); box-shadow: 0 0 0 4px #e8b84a22; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 0.35rem 0; }
 .chip { display: inline-flex; align-items: center; padding: 0.22rem 0.5rem; border: 1px solid #8b949e; background: #fff; font-size: 0.84rem; border-radius: 2px; }
 .chip.ok { border-color: var(--ok); background: #e1f0e7; color: var(--ok); }
 .chip.locked { border-color: var(--danger); background: #f3dcd7; color: var(--danger); font-weight: 700; }
+.chip.warn { border-color: var(--warn); background: #fbf1d8; color: #7a5a12; font-weight: 700; }
 .chip.read { border-color: #405a80; background: #e4ecf7; color: #243b5e; }
 .event-line { margin-top: 0.55rem; font-size: 0.88rem; }
 .event-cell { max-width: 260px; overflow-wrap: anywhere; font-size: 0.78rem; }

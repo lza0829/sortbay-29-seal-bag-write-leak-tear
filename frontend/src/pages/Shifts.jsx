@@ -28,8 +28,12 @@ export default function Shifts() {
           <div className="stat"><div className="n">{rec.已封袋数}</div><div className="l">已封袋数</div></div>
           <div className="stat"><div className="n">{rec.封口冻结件数 ?? '-'}</div><div className="l">封口冻结件数</div></div>
           <div className="stat"><div className={`n ${rec.封口件数一致 === false ? 'bad' : 'good'}`}>{rec.拧花袋?.length ?? 0}</div><div className="l">封口拧花袋</div></div>
+          <div className="stat"><div className={`n ${rec.半截袋?.length ? 'bad' : 'good'}`}>{rec.半截袋?.length ?? 0}</div><div className="l">封条半截袋</div></div>
           <div className="stat"><div className="n">{rec.未清件数}</div><div className="l">未清件数</div></div>
         </div>
+      )}
+      {rec?.半截袋?.length > 0 && (
+        <div className="err">封条半截：{JSON.stringify(rec.半截袋)}（灯灭但写口仍全关，需由封口事件重放核对缺口）</div>
       )}
       <table>
         <thead><tr><th>编号</th><th>营业日</th><th>班次</th><th>封班</th><th>操作</th></tr></thead>

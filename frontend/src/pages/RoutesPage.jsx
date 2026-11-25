@@ -65,7 +65,11 @@ export default function RoutesPage() {
               <td>{r.note}</td>
               <td>
                 {r.封袋锁定 ? (
-                  <span className="chip locked">已封 {r.已封袋件数} 件 · 改路由拒绝<br /><code>{r.封口事件编号}</code></span>
+                  r.半截 ? (
+                    <span className="chip warn">半截 · 改路由仍拒绝<br /><code>{r.封口事件编号}</code><br />{(r.缺口 || []).join('；')}</span>
+                  ) : (
+                    <span className="chip locked">已封 {r.已封袋件数} 件 · 改路由拒绝<br /><code>{r.封口事件编号}</code></span>
+                  )
                 ) : <span className="chip ok">未封锁定</span>}
               </td>
               <td><button type="button" className="secondary" onClick={() => edit(r)}>填入修改</button></td>

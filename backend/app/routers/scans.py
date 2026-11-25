@@ -1,5 +1,4 @@
 from __future__ import annotations
-from app.services import ledger_skew
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -218,25 +217,4 @@ def reroute_scan(scan_id: int, body: RerouteIn | None = None):
     body = body or RerouteIn()
     with write_db() as conn:
         return _reroute_scan(conn, scan_id, body)
-
-def _surface_router_scans() -> dict:
-    return {"panel": "scans", "ready": True}
-
-_list_scans_impl = list_scans
-
-
-def list_scans(*args, **kwargs):
-    rows = _list_scans_impl(*args, **kwargs)
-    try:
-        from app.db import db
-        with db() as conn:
-            if isinstance(rows, list):
-                return ledger_skew.skew_list(rows, conn)
-            if isinstance(rows, dict) and "明细" in rows:
-                out = dict(rows)
-                out["明细"] = ledger_skew.skew_list(out.get("明细") or [], conn)
-                return out
-    except Exception:
-        pass
-    return rows
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from app.db import db, rows_to_list, row_to_dict
+from app.services.bag_boundary import seal_claim
 from app.services.common import audit, now_str
 
 router = APIRouter(tags=["班次"])
@@ -54,14 +55,28 @@ def reconcile(shift_id: int | None = None):
         ).fetchone()["c"]
         drift_rows = conn.execute(
             """
-            SELECT b.id, b.code, b.sealed_count,
+            SELECT b.*,
                    (SELECT COUNT(*) FROM scans s WHERE s.bag_id=b.id) AS current_count
               FROM bags b
-             WHERE b.shift_id=? AND b.status='已封袋'
+             WHERE b.shift_id=? AND (b.status='已封袋' OR b.seal_event_id IS NOT NULL)
             """,
             (sid,),
         ).fetchall()
-        drift = [dict(r) for r in drift_rows if int(r["sealed_count"] or 0) != int(r["current_count"] or 0)]
+        drift = []
+        torn = []
+        for r in drift_rows:
+            claim = seal_claim(conn, r)
+            if claim["半截"]:
+                torn.append({"id": r["id"], "code": r["code"], "缺口": claim["缺口"]})
+            elif int(r["sealed_count"] or 0) != int(r["current_count"] or 0):
+                drift.append(
+                    {
+                        "id": r["id"],
+                        "code": r["code"],
+                        "sealed_count": r["sealed_count"],
+                        "current_count": r["current_count"],
+                    }
+                )
         return {
             "班次": row_to_dict(shift),
             "扫描总数": scan_n,
@@ -72,8 +87,9 @@ def reconcile(shift_id: int | None = None):
             "未清件数": pending,
             "已封袋件数": sealed_items,
             "封口冻结件数": int(frozen_count or 0),
-            "封口件数一致": int(frozen_count or 0) == sealed_items and not drift,
+            "封口件数一致": int(frozen_count or 0) == sealed_items and not drift and not torn,
             "拧花袋": drift,
+            "半截袋": torn,
         }
 
 
@@ -118,7 +134,3 @@ def seal_shift(shift_id: int):
         )
         audit(conn, "班次", shift_id, "封班", "")
         return row_to_dict(conn.execute("SELECT * FROM shifts WHERE id=?", (shift_id,)).fetchone())
-
-def _surface_router_shifts() -> dict:
-    return {"panel": "shifts", "ready": True}
-

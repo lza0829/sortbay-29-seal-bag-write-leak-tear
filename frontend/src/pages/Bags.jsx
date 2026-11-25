@@ -146,6 +146,7 @@ export default function Bags() {
           className="seal-button"
           onClick={seal}
           disabled={!bagId || selectedBag?.sealed}
+          title={selectedBag?.sealed ? '封口事件已落下，禁止二次封袋；重放封口事件查看缺口' : ''}
         >
           封袋确认
         </button>
@@ -155,10 +156,14 @@ export default function Bags() {
       </div>
 
       {selectedBag && (
-        <div className={`boundary-card ${selectedBag.sealed ? 'sealed' : 'open'}`}>
+        <div className={`boundary-card ${selectedBag.sealed ? (selectedBag.封条已亮 ? 'sealed' : 'torn') : 'open'}`}>
           <div className="boundary-title">
-            <span className={`seal-dot ${selectedBag.sealed ? 'on' : ''}`} />
-            {selectedBag.sealed ? '封条已亮 · 袋体写边界全关' : '袋口开放 · 未封，不得误挡入袋'}
+            <span className={`seal-dot ${selectedBag.封条已亮 ? 'on' : selectedBag.半截 ? 'torn' : ''}`} />
+            {selectedBag.封条已亮
+              ? '封条已亮 · 袋体写边界全关'
+              : selectedBag.半截
+                ? '半截：灯灭但写口仍全关，缺口=' + (selectedBag.缺口 || []).join('；')
+                : '袋口开放 · 未封，不得误挡入袋'}
           </div>
           <div className="chip-row">
             <span className={`chip ${selectedBag.add_allowed ? 'ok' : 'locked'}`}>再入袋：{selectedBag.add_allowed ? '开放' : '拒绝'}</span>
@@ -207,9 +212,13 @@ export default function Bags() {
               <td>{b.id}</td>
               <td>{b.code}</td>
               <td>{b.口门码}</td>
-              <td><span className={`badge ${b.sealed ? 'badge-locked' : 'badge-open'}`}>{b.status}{b.sealed ? ' · 封条已亮' : ''}</span></td>
+              <td>
+                <span className={`badge ${b.封条已亮 ? 'badge-locked' : b.半截 ? 'badge-torn' : 'badge-open'}`}>
+                  {b.status}{b.封条已亮 ? ' · 封条已亮' : b.半截 ? ' · 半截' : ''}
+                </span>
+              </td>
               <td>{b.件数}{b.sealed ? `（冻${b.封口件数}）` : ''}</td>
-              <td>{b.sealed ? '入袋/回流/改路由全关' : '开放'}</td>
+              <td>{b.sealed ? (b.封条已亮 ? '入袋/回流/改路由全关' : '半截：写口仍全关') : '开放'}</td>
               <td className="event-cell"><code>{b.封口事件编号 || '-'}</code></td>
               <td>
                 <button type="button" className="secondary" onClick={() => { setBagId(String(b.id)); setReplay(null) }}>选择</button>{' '}

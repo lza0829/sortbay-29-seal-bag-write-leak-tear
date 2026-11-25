@@ -68,10 +68,16 @@ export default function Audit() {
             <span className={`chip ${replay.一致性?.no_drift ? 'ok' : 'locked'}`}>
               {replay.一致性?.no_drift ? '一致：封口态与写闸未拧花' : '发现拧花'}
             </span>
+            <span className={`chip ${replay.一致性?.seal_light ? 'ok' : 'warn'}`}>
+              {replay.一致性?.seal_light ? '封条已亮' : replay.一致性?.torn ? '封条半截：灯灭且写口仍全关' : '封条未亮'}
+            </span>
             <span className="chip read">事件件数 {replay.一致性?.event_count}</span>
             <span className="chip read">冻结件数 {replay.一致性?.bag_sealed_count}</span>
             <span className="chip read">当前件数 {replay.一致性?.current_count}</span>
           </div>
+          {replay.一致性?.缺口?.length > 0 && (
+            <div className="warn-text">缺口：{replay.一致性.缺口.join('；')}</div>
+          )}
           <div className="chip-row">
             <span className="chip locked">再入袋：{replay.写闸?.再入袋}</span>
             <span className="chip locked">回流：{replay.写闸?.回流}</span>

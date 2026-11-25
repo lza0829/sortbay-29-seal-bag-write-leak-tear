@@ -79,7 +79,3 @@ def create_divert(body: DivertIn):
             "批次": row_to_dict(conn.execute("SELECT * FROM divert_batches WHERE id=?", (bid,)).fetchone()),
             "扫描": rows[0] if rows else None,
         }
-
-def _surface_router_diverts() -> dict:
-    return {"panel": "diverts", "ready": True}
-

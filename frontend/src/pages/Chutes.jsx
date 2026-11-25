@@ -47,8 +47,13 @@ export default function Chutes() {
               <td>{c.已封袋件数}</td>
               <td>
                 {c.集包中袋码 && <div>集包：{c.集包中袋码}</div>}
-                {c.已封袋袋码 && <div className="locked-text">已封：{c.已封袋袋码}</div>}
+                {c.已封袋袋码 && (
+                  <div className={c.封条已亮 ? 'locked-text' : 'warn-text'}>
+                    已封：{c.已封袋袋码}{c.半截 ? '（半截）' : ''}
+                  </div>
+                )}
                 {c.封口事件编号 && <code className="event-code">{c.封口事件编号}</code>}
+                {c.半截 && <div className="warn-text">缺口：{(c.缺口 || []).join('；')}</div>}
               </td>
               <td>
                 <button type="button" onClick={() => toggle(c.id, '口门开')}>开</button>{' '}

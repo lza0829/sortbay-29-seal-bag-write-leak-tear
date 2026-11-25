@@ -52,7 +52,3 @@ def set_chute(chute_id: int, 状态: str = Query(...)):
             raise HTTPException(404, "口门不存在")
         audit(conn, "口门", chute_id, "开闭", 状态)
         return row_to_dict(conn.execute("SELECT * FROM chutes WHERE id=?", (chute_id,)).fetchone())
-
-def _surface_router_chutes() -> dict:
-    return {"panel": "chutes", "ready": True}
-

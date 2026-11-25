@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db import db, row_to_dict, write_db
-from app.services.bag_boundary import find_route_rule_seal_lock
+from app.services.bag_boundary import find_route_rule_seal_lock, seal_claim
 from app.services.common import audit
 
 router = APIRouter(tags=["路由表"])
@@ -38,12 +38,14 @@ def list_routes():
               (
                 SELECT COUNT(*) FROM scans s
                   JOIN bags b ON b.id=s.bag_id
-                 WHERE s.dest_code=r.dest_code AND b.status='已封袋'
+                 WHERE s.dest_code=r.dest_code
+                   AND (b.status='已封袋' OR b.seal_event_id IS NOT NULL)
               ) AS 已封袋件数,
               (
                 SELECT b.seal_event_id FROM scans s
                   JOIN bags b ON b.id=s.bag_id
-                 WHERE s.dest_code=r.dest_code AND b.status='已封袋'
+                 WHERE s.dest_code=r.dest_code
+                   AND (b.status='已封袋' OR b.seal_event_id IS NOT NULL)
                  ORDER BY b.id DESC LIMIT 1
               ) AS 封口事件编号
             FROM route_rules r JOIN chutes c ON c.id=r.chute_id
@@ -53,9 +55,29 @@ def list_routes():
         result = []
         for row in rows:
             item = dict(row)
-            item["封袋锁定"] = int(item["已封袋件数"] or 0) > 0
-            item["reroute_locked"] = item["封袋锁定"]
+            locked = int(item["已封袋件数"] or 0) > 0
+            item["封袋锁定"] = locked
+            item["reroute_locked"] = locked
             item["event_id"] = item["封口事件编号"]
+            item["封条已亮"] = False
+            item["半截"] = False
+            item["缺口"] = []
+            if locked and item["封口事件编号"]:
+                sealed_bag = conn.execute(
+                    """
+                    SELECT b.* FROM scans s JOIN bags b ON b.id=s.bag_id
+                     WHERE s.dest_code=? AND b.seal_event_id=?
+                     ORDER BY b.id DESC LIMIT 1
+                    """,
+                    (item["dest_code"], item["封口事件编号"]),
+                ).fetchone()
+                if sealed_bag is not None:
+                    claim = seal_claim(conn, sealed_bag)
+                    item["封条已亮"] = claim["封条已亮"]
+                    item["半截"] = claim["半截"]
+                    item["缺口"] = claim["缺口"]
+                    item["封口事件编号"] = sealed_bag["seal_event_id"]
+                    item["event_id"] = sealed_bag["seal_event_id"]
             result.append(item)
         return result
 
@@ -108,7 +130,3 @@ def upsert_route(body: RouteIn):
             action = "新建路由"
         audit(conn, "路由表", rid, action, dest_code)
         return row_to_dict(conn.execute("SELECT * FROM route_rules WHERE id=?", (rid,)).fetchone())
-
-def _surface_router_routes() -> dict:
-    return {"panel": "routes", "ready": True}
-
